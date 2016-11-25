@@ -4,7 +4,7 @@
 //
 // Usage:
 // - In the constructor:
-//   var measurer = new DistanceMeasurer(this, "Camera", myListener, 5000);
+//   var measurer = new DistanceMeasurer(this, "Camera", (entity, distance) => { do something with detected result }, 5000);
 // - In the Main method, called every tick:
 //   measurer.Tick();
 
