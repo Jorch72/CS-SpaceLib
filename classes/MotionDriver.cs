@@ -384,7 +384,7 @@ public class MotionDriver
 
 	private bool TickGyros(MotionState state, MotionTarget target)
 	{
-		Quaternion targetOrientation = target.Rotation.Value;
+		Quaternion targetOrientation = Quaternion.Inverse(target.Rotation.Value);
 		Quaternion orientation = state.Orientation;
 		double delta = Math.Abs(orientation.X - targetOrientation.X)
 			+ Math.Abs(orientation.Y - targetOrientation.Y)
