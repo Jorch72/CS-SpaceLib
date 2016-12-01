@@ -62,9 +62,7 @@ public class MotionDriver
 		{
 			Time = driver.time;
 			Position = driver.shipController.GetPosition();
-
-			MatrixD orientation = MatrixD.Invert(driver.shipController.WorldMatrix.GetOrientation());
-			Orientation = Quaternion.CreateFromRotationMatrix(orientation);
+			Orientation = Quaternion.CreateFromRotationMatrix(driver.shipController.WorldMatrix.GetOrientation());
 
 			BaseMass = driver.baseMass;
 			TotalMass = driver.totalMass;
