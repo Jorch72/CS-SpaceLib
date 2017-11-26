@@ -17,6 +17,8 @@ public interface MotionController
 	MotionDriver.MotionTarget Tick(MotionDriver.MotionState state, double delta);
 
 	void OnArrived(MotionDriver.MotionState state);
+	void OnArrivedPosition(MotionDriver.MotionState state);
+	void OnArrivedOrientation(MotionDriver.MotionState state);
 
 	string Serialize();
 }
@@ -62,13 +64,13 @@ public class MotionDriver
 		{
 			Time = driver.time;
 			Position = driver.shipController.GetPosition();
-			Orientation = Quaternion.CreateFromRotationMatrix(driver.shipController.WorldMatrix.GetOrientation());
+			Orientation = Quaternion.CreateFromRotationMatrix(driver.shipController.CubeGrid.WorldMatrix.GetOrientation());
 
 			BaseMass = driver.baseMass;
 			TotalMass = driver.totalMass;
 
-			WorldMatrix = driver.shipController.WorldMatrix;
-			WorldMatrixInverse = MatrixD.Invert(this.WorldMatrix);
+			WorldMatrix = driver.shipController.CubeGrid.WorldMatrix;
+			WorldMatrixInverse = MatrixD.Invert(WorldMatrix);
 
 			PowerPosX = driver.powerPosX;
 			PowerPosY = driver.powerPosY;
@@ -86,6 +88,7 @@ public class MotionDriver
 			AngularVelocityLocalYPR = Vector3D.TransformNormal(AngularVelocityLocalYPR, WorldMatrixInverse);
 			Quaternion.CreateFromYawPitchRoll((float)-AngularVelocityLocalYPR.Y, (float)AngularVelocityLocalYPR.X, (float)-AngularVelocityLocalYPR.Z, out AngularVelocityLocal);
 
+			// TODO: double-check gravity compensation
 			GravityWorld = driver.shipController.GetNaturalGravity();
 			GravityLocal = Vector3D.TransformNormal(GravityWorld, WorldMatrixInverse);
 		}
@@ -99,19 +102,26 @@ public class MotionDriver
 			return new MotionTarget(position, null, null);
 		}
 
-		public static MotionTarget Linear(Vector3D position, Vector3D speed)
+		public static MotionTarget LinearLocal(IMyTerminalBlock relativeTo, Vector3D position, Vector3D velocity)
 		{
-			return new MotionTarget(position, speed, null);
+			return new MotionTarget(position, Vector3D.TransformNormal(velocity, relativeTo.WorldMatrix), null);
 		}
 
-		public static MotionTarget Orientation(Quaternion orientation)
+		public static MotionTarget LinearWorld(Vector3D position, Vector3D velocity)
 		{
-			return new MotionTarget(null, null, orientation);
+			return new MotionTarget(position, velocity, null);
 		}
 
-		public readonly Vector3D? Position;
-		public readonly Vector3D Speed;
-		public readonly Quaternion? Rotation;
+		public static MotionTarget Orientation(IMyTerminalBlock relativeTo, Quaternion orientation)
+		{
+			Quaternion blockOrientation;
+			relativeTo.Orientation.GetQuaternion(out blockOrientation);
+			return new MotionTarget(null, null, Quaternion.Inverse(blockOrientation) * orientation);
+		}
+
+		public Vector3D? Position;
+		public Vector3D Speed;
+		public Quaternion? Rotation;
 
 		public MotionTarget(string serialized)
 		{
@@ -126,6 +136,13 @@ public class MotionDriver
 			Position = position;
 			Speed = speed ?? Vector3D.Zero;
 			Rotation = rotation;
+		}
+
+		public void SetOrientation(IMyTerminalBlock relativeTo, Quaternion orientation)
+		{
+			Quaternion blockOrientation;
+			relativeTo.Orientation.GetQuaternion(out blockOrientation);
+			Rotation = Quaternion.Inverse(blockOrientation) * orientation;
 		}
 
 		public string Serialize()
@@ -144,7 +161,7 @@ public class MotionDriver
 	}
 
 	// tweakable variables
-	public double positionPrecision = 0.02; // square of tolerated position difference
+	public double positionPrecision = 0.04; // square of tolerated position difference
 	public double velocityPrecision = 0.1; // square of tolerated velocity difference
 	public double angularPrecision = 0.001;
 	// !! tweak this according to your ship properties
@@ -152,23 +169,33 @@ public class MotionDriver
 	public Vector3D rotationDampening = new Vector3D(0.5, 0.5, 0.5);
 	// you could tweak this too, determines how fast it should rotate
 	// low values will decrease rotation speed, but too high values will destabilize the rotation
-	public Vector3D angularCorrectionFactor = new Vector3D(5, 5, 5);
+	public Vector3D angularCorrectionFactor = new Vector3D(10, 10, 10);
 
 	private void InitThrusterPowers()
 	{
 		// If modded thrusters are used, add their subblock IDs here
-		register("SmallBlockSmallThrust", 12000, 0, 1, 1.0, 0.3, false);
-		register("SmallBlockLargeThrust", 144000, 0, 1, 1.0, 0.3, false);
-		register("LargeBlockSmallThrust", 288000, 0, 1, 1.0, 0.3, false);
-		register("LargeBlockLargeThrust", 3600000, 0, 1, 1.0, 0.3, false);
-		register("SmallBlockLargeHydrogenThrust", 400000, 0, 1, 1, 1, false);
-		register("SmallBlockSmallHydrogenThrust", 82000, 0, 1, 1, 1, false);
-		register("LargeBlockLargeHydrogenThrust", 6000000, 0, 1, 1, 1, false);
-		register("LargeBlockSmallHydrogenThrust", 900000, 0, 1, 1, 1, false);
+		register("SmallBlockSmallThrust", 12000, 0, 1, 1.0, 0.3);
+		register("SmallBlockLargeThrust", 144000, 0, 1, 1.0, 0.3);
+		register("LargeBlockSmallThrust", 288000, 0, 1, 1.0, 0.3);
+		register("LargeBlockLargeThrust", 3600000, 0, 1, 1.0, 0.3);
+		register("SmallBlockLargeHydrogenThrust", 400000, 0, 1, 1, 1);
+		register("SmallBlockSmallHydrogenThrust", 82000, 0, 1, 1, 1);
+		register("LargeBlockLargeHydrogenThrust", 6000000, 0, 1, 1, 1);
+		register("LargeBlockSmallHydrogenThrust", 900000, 0, 1, 1, 1);
 		register("SmallBlockLargeAtmosphericThrust", 408000, 0.3, 1.0, 0, 1, true);
 		register("SmallBlockSmallAtmosphericThrust", 80000, 0.3, 1.0, 0, 1, true);
 		register("LargeBlockLargeAtmosphericThrust", 5400000, 0.3, 1.0, 0, 1, true);
 		register("LargeBlockSmallAtmosphericThrust", 420000, 0.3, 1.0, 0, 1, true);
+		// Armored thrusters
+		register("SmallBlockArmorThrust", 12000, 0, 1, 1, .3);
+		register("SmallBlockArmorSlopedThrust", 12000, 0, 1, 1, .3);
+		register("SBLArmorThrust", 144000, 0, 1, 1, .3);
+		register("SBLArmorThrustSloped", 144000, 0, 1, 1, .3);
+		register("LargeBlockArmorThrust", 288000, 0, 1, 1, .3);
+		register("LargeBlockArmorSlopedThrust", 288000, 0, 1, 1, .3);
+		register("LBLArmorThrust", 3600000, 0, 1, 1, .3);
+		register("LBLArmorThrustSloped", 3600000, 0, 1, 1, .3);
+
 	}
 
 	private const double TICK_TIME = 1.0 / 60.0;
@@ -207,6 +234,10 @@ public class MotionDriver
 	private double powerPosZ = 0; // backward
 	private double powerNegZ = 0; // forward
 
+	public string MotionDebug = "";
+	public MotionState LastState = null;
+	public string MotionStateDebug = "";
+
 	/// <summary>
 	/// Initializes a motion controller. Only blocks on the grid of the given ship controller will be taken into account.
 	/// </summary>
@@ -240,7 +271,7 @@ public class MotionDriver
 		double maxPlanetaryInfluence,
 		double effectivenessAtMinInfluence,
 		double effectivenessAtMaxInfluence,
-		bool needsAtmosphereForInfluence)
+		bool needsAtmosphereForInfluence = false)
 	{
 		thrusterTypes[subId] = new ThrusterInfo(
 			force,
@@ -279,11 +310,11 @@ public class MotionDriver
 		ticks++;
 
 		if ((ticks % 60) == 1)
-			UpdateThrusterPower();
+			UpdateThrusters();
 		if ((ticks % 60) == 2)
 			UpdateMass();
 		if ((ticks % 60) == 3)
-			UpdateThrusters();
+			UpdateThrusterPower();
 		if ((ticks % 60) == 4)
 			UpdateGyros();
 
@@ -293,40 +324,54 @@ public class MotionDriver
 		if (controller == null)
 		{
 			ClearThrustersOverride();
-			SetGyrosOverride(false);
 			return;
 		}
 
 		var state = GetState();
 		var target = controller.Tick(state, DELTA);
+		LastState = state;
 
+		var arrivedPosition = false;
 		var arrived = true;
 		if (target.Position.HasValue || target.Speed.LengthSquared() > 0)
-			arrived &= TickThrusters(state, target);
+		{
+			arrivedPosition = TickThrusters(state, target);
+			arrived &= arrivedPosition;
+		}
 		else
+		{
 			ClearThrustersOverride();
+		}
 
+		var arrivedOrientation = false;
 		if (target.Rotation.HasValue)
-			arrived &= TickGyros(state, target);
+		{
+			arrivedOrientation = TickGyros(state, target);
+			arrived &= arrivedOrientation;
+		}
 		else
+		{
 			SetGyrosOverride(false);
+		}
 
 		if (arrived)
 			controller.OnArrived(state);
+		if (arrivedPosition)
+			controller.OnArrivedPosition(state);
+		if (arrivedOrientation)
+			controller.OnArrivedOrientation(state);
 
 		time += DELTA;
 	}
 
 	private bool TickThrusters(MotionState state, MotionTarget target)
 	{
-		MatrixD worldInv = MatrixD.Invert(shipController.WorldMatrix);
-
 		Vector3D currentVelocity = state.VelocityLocal;
-		Vector3D currentPosition = Vector3D.Transform(state.Position, worldInv);
+		Vector3D currentPosition = Vector3D.Transform(state.Position, state.WorldMatrixInverse);
 		Vector3D currentGravity = state.GravityLocal;
 
 		Vector3D targetSpeed = target.Speed;
-		Vector3D targetPosition = Vector3D.Transform(target.Position ?? (state.Position + (targetSpeed + currentVelocity) * DELTA * .66), worldInv);
+		Vector3D targetPosition = Vector3D.Transform(target.Position ?? (state.Position + (targetSpeed + currentVelocity) * DELTA * .66), state.WorldMatrixInverse);
 
 		Vector3D speedDifference = targetSpeed - currentVelocity;
 		Vector3D positionDifference = targetPosition - currentPosition;
@@ -336,6 +381,7 @@ public class MotionDriver
 			SetDampeners(true);
 			return true;
 		}
+
 
 		Vector3D deceleration = GetAccelerations(speedDifference) + currentGravity;
 		Vector3D decelerationTimes = speedDifference / deceleration;
@@ -398,15 +444,16 @@ public class MotionDriver
 		foreach (IMyGyro gyro in gyros)
 		{
 			Vector3D rotationAngles = calculateGyroRotation(gyro, targetOrientation);
-
-			MatrixD worldMatrixInv = MatrixD.Invert(gyro.WorldMatrix);
-			Vector3D relativeAngularVelocity = Vector3D.TransformNormal(state.AngularVelocityWorldYPR, worldMatrixInv);
-
 			Vector3D rotationSpeedRad = rotationAngles * angularCorrectionFactor;
-			Vector3D rotationSpeedDampened = rotationSpeedRad - state.AngularVelocityLocalYPR * rotationDampening;
-			gyro.SetValueFloat("Yaw", -(float)rotationSpeedDampened.Y);
-			gyro.SetValueFloat("Pitch", (float)rotationSpeedDampened.X);
-			gyro.SetValueFloat("Roll", -(float)rotationSpeedDampened.Z);
+
+			Matrix gyroOrientation;
+			gyro.Orientation.GetMatrix(out gyroOrientation);
+			Vector3D relativeAngularVelocity = Vector3D.TransformNormal(state.AngularVelocityLocalYPR, gyroOrientation);
+			Vector3D rotationSpeedDampened = rotationSpeedRad - relativeAngularVelocity * rotationDampening;
+
+			gyro.SetValueFloat("Yaw", (float)rotationSpeedDampened.Y);
+			gyro.SetValueFloat("Pitch", -(float)rotationSpeedDampened.X);
+			gyro.SetValueFloat("Roll", (float)rotationSpeedDampened.Z);
 		}
 
 		return false;
@@ -415,13 +462,13 @@ public class MotionDriver
 	private void UpdateThrusters()
 	{
 		thrusters.Clear();
-		program.GridTerminalSystem.GetBlocksOfType(thrusters, thruster => thruster.IsWorking && thruster.CubeGrid == shipController.CubeGrid);
+		program.GridTerminalSystem.GetBlocksOfType<IMyThrust>(thrusters, thruster => thruster.IsWorking && thruster.CubeGrid == shipController.CubeGrid);
 	}
 
 	private void UpdateGyros()
 	{
 		gyros.Clear();
-		program.GridTerminalSystem.GetBlocksOfType(gyros, gyro => gyro.IsWorking && gyro.CubeGrid == shipController.CubeGrid);
+		program.GridTerminalSystem.GetBlocksOfType<IMyGyro>(gyros, gyro => gyro.IsWorking && gyro.CubeGrid == shipController.CubeGrid);
 	}
 
 	private void SetGyrosOverride(bool gyroOverride)
@@ -465,7 +512,7 @@ public class MotionDriver
 		MyBlockOrientation orientation = shipController.Orientation;
 		foreach (IMyThrust thruster in thrusters)
 		{
-			Base6Directions.Direction direction = orientation.TransformDirectionInverse(Base6Directions.GetFlippedDirection(thruster.Orientation.Forward));
+			Base6Directions.Direction direction = Base6Directions.GetFlippedDirection(thruster.Orientation.Forward);
 			switch (direction)
 			{
 				case Base6Directions.Direction.Right:
@@ -492,6 +539,8 @@ public class MotionDriver
 
 	private void UpdateThrusterPower()
 	{
+		MotionDebug = "";
+
 		powerPosX = 0;
 		powerNegX = 0;
 		powerPosY = 0;
@@ -510,10 +559,9 @@ public class MotionDriver
 				airDensity = getAirDensityAtPlanet(altitude);
 		}
 
-		MyBlockOrientation orientation = shipController.Orientation;
 		foreach (IMyThrust thruster in thrusters)
 		{
-			Base6Directions.Direction direction = orientation.TransformDirectionInverse(Base6Directions.GetFlippedDirection(thruster.Orientation.Forward));
+			Base6Directions.Direction direction = Base6Directions.GetFlippedDirection(thruster.Orientation.Forward);
 			ThrusterInfo info = thrusterTypes.GetValueOrDefault(thruster.BlockDefinition.SubtypeId);
 			if (info == null)
 			{
@@ -557,10 +605,11 @@ public class MotionDriver
 	{
 		Quaternion gyroOrientation;
 		gyro.Orientation.GetQuaternion(out gyroOrientation);
-		return quaternionToYPR(Quaternion.CreateFromRotationMatrix(MatrixD.Transform(gyro.WorldMatrix, gyroOrientation * desiredOrientation)));
+		Quaternion relativeOrientation = Quaternion.Inverse(Quaternion.CreateFromRotationMatrix(gyro.WorldMatrix)) * Quaternion.Inverse(gyroOrientation) * desiredOrientation;
+		return quaternionToYPR(relativeOrientation);
 	}
 
-	private Vector3D quaternionToYPR(Quaternion rotation)
+	public Vector3D quaternionToYPR(Quaternion rotation)
 	{
 		MatrixD transform = MatrixD.CreateFromQuaternion(rotation);
 		Vector3D result = new Vector3D();

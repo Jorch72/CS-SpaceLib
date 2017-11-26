@@ -2,7 +2,7 @@
 
 public class FixedMotionController : MotionController
 {
-	private readonly MotionDriver.MotionTarget target;
+	private MotionDriver.MotionTarget target;
 
 	public FixedMotionController(MotionDriver.MotionTarget target)
 	{
@@ -21,7 +21,26 @@ public class FixedMotionController : MotionController
 
 	public void OnArrived(MotionDriver.MotionState state)
 	{
+	}
 
+	public void OnArrivedPosition(MotionDriver.MotionState state)
+	{
+		target.Position = null;
+	}
+
+	public void OnArrivedOrientation(MotionDriver.MotionState state)
+	{
+		target.Rotation = null;
+	}
+
+	public void MoveTo(Vector3D vector)
+	{
+		target.Position = vector;
+	}
+
+	public void SetOrientation(IMyTerminalBlock relativeTo, Quaternion orientation)
+	{
+		target.SetOrientation(relativeTo, orientation);
 	}
 
 	public string Serialize()
